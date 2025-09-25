@@ -40,15 +40,32 @@ const Login: React.FC = () => {
   };
 
   const handleGoogleLogin = async () => {
-    // This is a mock implementation
-    // In a real app, you would integrate with Google OAuth
     try {
-      const mockGoogleData = {
-        token: 'mock-google-token',
-        name: 'Google User',
-        email: 'google@example.com'
-      };
-      await googleLogin(mockGoogleData.token, mockGoogleData.name, mockGoogleData.email);
+      // Initialize Google OAuth
+      if (window.google) {
+        window.google.accounts.id.initialize({
+          client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID || 'your-google-client-id',
+          callback: async (response: any) => {
+            try {
+              // Decode the JWT token to get user info
+              const payload = JSON.parse(atob(response.credential.split('.')[1]));
+              await googleLogin(response.credential, payload.name, payload.email);
+            } catch (error) {
+              console.error('Google login error:', error);
+            }
+          }
+        });
+        
+        window.google.accounts.id.prompt();
+      } else {
+        // Fallback to mock data for demonstration
+        const mockGoogleData = {
+          token: 'mock-google-token',
+          name: 'Demo User',
+          email: 'demo@google.com'
+        };
+        await googleLogin(mockGoogleData.token, mockGoogleData.name, mockGoogleData.email);
+      }
     } catch (error) {
       // Error is handled by context
     }

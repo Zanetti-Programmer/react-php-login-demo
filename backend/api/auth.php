@@ -1,74 +1,101 @@
 <?php
-header("Access-Control-Allow-Origin: http://localhost:3000");
-header("Content-Type: application/json; charset=UTF-8");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
-header("Access-Control-Max-Age: 3600");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
-
-// Handle preflight OPTIONS request
-if ($_REQUEST['REQUEST_METHOD'] == 'OPTIONS') {
-    header("HTTP/1.1 200 OK");
-    exit();
-}
-
+// Include configuration
+include_once '../config/config.php';
 include_once '../config/database.php';
 include_once '../models/User.php';
 
+// Handle CORS
+Config::handleCors();
+
+// Set content type
+header("Content-Type: application/json; charset=UTF-8");
+
+// Initialize database connection
 $database = new Database();
 $db = $database->getConnection();
-$user = new User($db);
 
+if (!$db) {
+    http_response_code(500);
+    echo json_encode(array("message" => "Database connection failed."));
+    exit();
+}
+
+$user = new User($db);
 $data = json_decode(file_get_contents("php://input"));
 $action = isset($_GET['action']) ? $_GET['action'] : '';
 
-switch($action) {
-    case 'register':
-        if(!empty($data->name) && !empty($data->email) && !empty($data->password)) {
+// Error handling function
+function handleError($message, $code = 400) {
+    http_response_code($code);
+    echo json_encode(array("message" => $message));
+    exit();
+}
+
+// Success response function
+function sendSuccess($message, $data = null, $code = 200) {
+    http_response_code($code);
+    $response = array("message" => $message);
+    if ($data) {
+        $response = array_merge($response, $data);
+    }
+    echo json_encode($response);
+    exit();
+}
+
+try {
+    switch($action) {
+        case 'register':
+            if(empty($data->name) || empty($data->email) || empty($data->password)) {
+                handleError("All fields are required for registration.");
+            }
+            
+            if (!filter_var($data->email, FILTER_VALIDATE_EMAIL)) {
+                handleError("Invalid email format.");
+            }
+            
+            if (strlen($data->password) < 6) {
+                handleError("Password must be at least 6 characters long.");
+            }
+
             $user->name = $data->name;
             $user->email = $data->email;
             $user->password = $data->password;
-            $user->token = bin2hex(random_bytes(50));
+            $user->token = bin2hex(random_bytes(Config::TOKEN_LENGTH / 2));
 
             // Check if email already exists
             if($user->emailExists()) {
-                http_response_code(400);
-                echo json_encode(array("message" => "Email already exists."));
+                handleError("Email already exists.", 409);
             }
-            else {
-                if($user->create()) {
-                    http_response_code(201);
-                    echo json_encode(array(
-                        "message" => "User was created.",
-                        "token" => $user->token,
-                        "user" => array(
-                            "name" => $user->name,
-                            "email" => $user->email
-                        )
-                    ));
-                }
-                else {
-                    http_response_code(503);
-                    echo json_encode(array("message" => "Unable to create user."));
-                }
-            }
-        }
-        else {
-            http_response_code(400);
-            echo json_encode(array("message" => "Unable to create user. Data is incomplete."));
-        }
-        break;
 
-    case 'login':
-        if(!empty($data->email) && !empty($data->password)) {
+            if($user->create()) {
+                sendSuccess("User created successfully.", array(
+                    "token" => $user->token,
+                    "user" => array(
+                        "name" => $user->name,
+                        "email" => $user->email
+                    )
+                ), 201);
+            } else {
+                handleError("Failed to create user.", 500);
+            }
+            break;
+
+        case 'login':
+            if(empty($data->email) || empty($data->password)) {
+                handleError("Email and password are required.");
+            }
+            
+            if (!filter_var($data->email, FILTER_VALIDATE_EMAIL)) {
+                handleError("Invalid email format.");
+            }
+
             $user->email = $data->email;
             
             if($user->emailExists()) {
                 if(password_verify($data->password, $user->password)) {
-                    $user->token = bin2hex(random_bytes(50));
+                    $user->token = bin2hex(random_bytes(Config::TOKEN_LENGTH / 2));
                     if($user->updateToken()) {
-                        http_response_code(200);
-                        echo json_encode(array(
-                            "message" => "Successful login.",
+                        sendSuccess("Login successful.", array(
                             "token" => $user->token,
                             "user" => array(
                                 "id" => $user->id,
@@ -76,121 +103,114 @@ switch($action) {
                                 "email" => $user->email
                             )
                         ));
+                    } else {
+                        handleError("Failed to generate session token.", 500);
                     }
-                    else {
-                        http_response_code(503);
-                        echo json_encode(array("message" => "Unable to update token."));
-                    }
+                } else {
+                    handleError("Invalid credentials.", 401);
                 }
-                else {
-                    http_response_code(401);
-                    echo json_encode(array("message" => "Login failed. Invalid credentials."));
-                }
+            } else {
+                handleError("User not found.", 401);
             }
-            else {
-                http_response_code(401);
-                echo json_encode(array("message" => "Login failed. User not found."));
-            }
-        }
-        else {
-            http_response_code(400);
-            echo json_encode(array("message" => "Unable to login. Data is incomplete."));
-        }
-        break;
+            break;
 
-    case 'verify':
-        $headers = apache_request_headers();
-        $token = isset($headers['Authorization']) ? str_replace('Bearer ', '', $headers['Authorization']) : '';
-        
-        if(!empty($token)) {
+        case 'verify':
+            $headers = getallheaders();
+            $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+            $token = str_replace('Bearer ', '', $authHeader);
+            
+            if(empty($token)) {
+                handleError("Authorization token is required.", 401);
+            }
+
             $user->token = $token;
             if($user->getUserByToken()) {
-                http_response_code(200);
-                echo json_encode(array(
-                    "message" => "Valid token.",
+                sendSuccess("Token is valid.", array(
                     "user" => array(
                         "id" => $user->id,
                         "name" => $user->name,
                         "email" => $user->email
                     )
                 ));
+            } else {
+                handleError("Invalid or expired token.", 401);
             }
-            else {
-                http_response_code(401);
-                echo json_encode(array("message" => "Invalid token."));
-            }
-        }
-        else {
-            http_response_code(400);
-            echo json_encode(array("message" => "Token is required."));
-        }
-        break;
+            break;
 
-    case 'google':
-        if(!empty($data->token)) {
-            // In a real application, you would verify the Google token here
-            // For now, we'll just extract the user info from the token payload
-            // This should be replaced with proper Google OAuth verification
+        case 'google':
+            if(empty($data->token) || empty($data->name) || empty($data->email)) {
+                handleError("Google authentication data is incomplete.");
+            }
             
-            if(!empty($data->name) && !empty($data->email)) {
-                $user->name = $data->name;
-                $user->email = $data->email;
-                $user->password = password_hash(uniqid(), PASSWORD_DEFAULT); // Random password for Google users
-                $user->token = bin2hex(random_bytes(50));
+            if (!filter_var($data->email, FILTER_VALIDATE_EMAIL)) {
+                handleError("Invalid email format from Google.");
+            }
 
-                // Check if user already exists
-                if($user->emailExists()) {
-                    // Update token for existing user
-                    if($user->updateToken()) {
-                        http_response_code(200);
-                        echo json_encode(array(
-                            "message" => "Google login successful.",
-                            "token" => $user->token,
-                            "user" => array(
-                                "id" => $user->id,
-                                "name" => $user->name,
-                                "email" => $user->email
-                            )
-                        ));
-                    }
-                    else {
-                        http_response_code(503);
-                        echo json_encode(array("message" => "Unable to update token."));
-                    }
+            // TODO: Verify Google token with Google's API
+            // For now, we trust the client-side verification
+            
+            $user->name = $data->name;
+            $user->email = $data->email;
+            $user->password = password_hash(uniqid(), PASSWORD_DEFAULT); // Random password for Google users
+            $user->token = bin2hex(random_bytes(Config::TOKEN_LENGTH / 2));
+
+            // Check if user already exists
+            if($user->emailExists()) {
+                // Update token for existing user
+                if($user->updateToken()) {
+                    sendSuccess("Google login successful.", array(
+                        "token" => $user->token,
+                        "user" => array(
+                            "id" => $user->id,
+                            "name" => $user->name,
+                            "email" => $user->email
+                        )
+                    ));
+                } else {
+                    handleError("Failed to update session token.", 500);
                 }
-                else {
-                    // Create new user
-                    if($user->create()) {
-                        http_response_code(201);
-                        echo json_encode(array(
-                            "message" => "Google user created and logged in.",
-                            "token" => $user->token,
-                            "user" => array(
-                                "name" => $user->name,
-                                "email" => $user->email
-                            )
-                        ));
-                    }
-                    else {
-                        http_response_code(503);
-                        echo json_encode(array("message" => "Unable to create user."));
-                    }
+            } else {
+                // Create new user
+                if($user->create()) {
+                    sendSuccess("Google account linked successfully.", array(
+                        "token" => $user->token,
+                        "user" => array(
+                            "name" => $user->name,
+                            "email" => $user->email
+                        )
+                    ), 201);
+                } else {
+                    handleError("Failed to create user account.", 500);
                 }
             }
-            else {
-                http_response_code(400);
-                echo json_encode(array("message" => "Invalid Google token data."));
-            }
-        }
-        else {
-            http_response_code(400);
-            echo json_encode(array("message" => "Google token is required."));
-        }
-        break;
+            break;
 
-    default:
-        http_response_code(404);
-        echo json_encode(array("message" => "Endpoint not found."));
-        break;
+        case 'logout':
+            $headers = getallheaders();
+            $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+            $token = str_replace('Bearer ', '', $authHeader);
+            
+            if(!empty($token)) {
+                $user->token = $token;
+                if($user->getUserByToken()) {
+                    $user->token = null;
+                    $user->updateToken();
+                }
+            }
+            
+            sendSuccess("Logged out successfully.");
+            break;
+
+        default:
+            handleError("Invalid action specified.", 404);
+            break;
+    }
+    
+} catch (Exception $e) {
+    if (Config::DEBUG_MODE) {
+        handleError("Server error: " . $e->getMessage(), 500);
+    } else {
+        handleError("Internal server error.", 500);
+    }
 }
 ?>

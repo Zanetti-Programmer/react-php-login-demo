@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { GoogleIdentityConfig, CredentialResponse, PromptMomentNotification, GoogleSignInButtonConfig } from '../types/google';
 
 const Login: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -9,6 +10,10 @@ const Login: React.FC = () => {
     password: '',
     confirmPassword: '',
   });
+  const [googleInitialized, setGoogleInitialized] = useState(false);
+  const [oneTapFailed, setOneTapFailed] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+  const googleButtonRef = useRef<HTMLDivElement>(null);
   
   const { login, register, googleLogin, loading, error, clearError } = useAuth();
 
@@ -39,37 +44,149 @@ const Login: React.FC = () => {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    try {
-      // Initialize Google OAuth
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID || 'your-google-client-id',
-          callback: async (response: any) => {
-            try {
-              // Decode the JWT token to get user info
-              const payload = JSON.parse(atob(response.credential.split('.')[1]));
-              await googleLogin(response.credential, payload.name, payload.email);
-            } catch (error) {
-              console.error('Google login error:', error);
-            }
+  // Initialize Google OAuth on component mount
+  useEffect(() => {
+    initializeGoogleOAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const initializeGoogleOAuth = async () => {
+    // Wait for Google Identity Services to load
+    let retries = 0;
+    const maxRetries = 10;
+    
+    const waitForGoogle = () => {
+      return new Promise<void>((resolve, reject) => {
+        const checkGoogle = () => {
+          if (window.google?.accounts?.id) {
+            resolve();
+          } else if (retries < maxRetries) {
+            retries++;
+            setTimeout(checkGoogle, 500);
+          } else {
+            reject(new Error('Google Identity Services failed to load'));
           }
-        });
-        
-        window.google.accounts.id.prompt();
-      } else {
-        // Fallback to mock data for demonstration
-        const mockGoogleData = {
-          token: 'mock-google-token',
-          name: 'Demo User',
-          email: 'demo@google.com'
         };
-        await googleLogin(mockGoogleData.token, mockGoogleData.name, mockGoogleData.email);
-      }
+        checkGoogle();
+      });
+    };
+
+    try {
+      await waitForGoogle();
+      
+      const config: GoogleIdentityConfig = {
+        client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID || 'your-google-client-id',
+        callback: handleGoogleCredentialResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true,
+        context: isLogin ? 'signin' : 'signup',
+        // FedCM compatibility
+        use_fedcm_for_prompt: true,
+      };
+
+      window.google!.accounts.id.initialize(config);
+      setGoogleInitialized(true);
+      
+      // Try One Tap first, but don't rely on it
+      attemptOneTap();
+      
+      // Always render the manual button
+      renderManualButton();
+      
     } catch (error) {
-      // Error is handled by context
+      console.warn('Google OAuth initialization failed:', error);
+      setGoogleError('Google Sign-In is temporarily unavailable');
     }
   };
+
+  const attemptOneTap = () => {
+    if (!window.google?.accounts?.id) return;
+
+    try {
+      window.google.accounts.id.prompt((notification: PromptMomentNotification) => {
+        if (notification.isNotDisplayed()) {
+          const reason = notification.getNotDisplayedReason();
+          console.info('One Tap not displayed:', reason);
+          
+          switch (reason) {
+            case 'opt_out_or_no_session':
+              setOneTapFailed(true);
+              // This is expected - user hasn't opted in or no session
+              break;
+            case 'browser_not_supported':
+            case 'invalid_client':
+            case 'missing_client_id':
+            case 'secure_http_required':
+            case 'unregistered_origin':
+              setGoogleError(`Google Sign-In configuration issue: ${reason}`);
+              break;
+            case 'suppressed_by_user':
+              setOneTapFailed(true);
+              // User actively dismissed One Tap
+              break;
+            default:
+              setOneTapFailed(true);
+          }
+        }
+        
+        if (notification.isSkippedMoment()) {
+          const reason = notification.getSkippedReason();
+          console.info('One Tap skipped:', reason);
+          setOneTapFailed(true);
+        }
+      });
+    } catch (error) {
+      console.warn('One Tap prompt failed:', error);
+      setOneTapFailed(true);
+    }
+  };
+
+  const renderManualButton = () => {
+    if (!window.google?.accounts?.id || !googleButtonRef.current) return;
+
+    // Clear any existing button
+    googleButtonRef.current.innerHTML = '';
+
+    const buttonConfig: GoogleSignInButtonConfig = {
+      type: 'standard',
+      size: 'large',
+      theme: 'outline',
+      text: isLogin ? 'signin_with' : 'signup_with',
+      shape: 'rectangular',
+      logo_alignment: 'left',
+      width: '100%',
+    };
+
+    try {
+      window.google.accounts.id.renderButton(googleButtonRef.current, buttonConfig);
+    } catch (error) {
+      console.error('Failed to render Google button:', error);
+      setGoogleError('Failed to load Google Sign-In button');
+    }
+  };
+
+  const handleGoogleCredentialResponse = async (response: CredentialResponse) => {
+    try {
+      setGoogleError(null);
+      
+      // Decode the JWT token to get user info
+      const payload = JSON.parse(atob(response.credential.split('.')[1]));
+      console.info('Google login successful via:', response.select_by);
+      
+      await googleLogin(response.credential, payload.name, payload.email);
+    } catch (error) {
+      console.error('Google login error:', error);
+      setGoogleError('Google login failed. Please try again.');
+    }
+  };
+
+  // Re-render button when mode changes
+  useEffect(() => {
+    if (googleInitialized) {
+      renderManualButton();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLogin, googleInitialized]);
 
   const toggleMode = () => {
     setIsLogin(!isLogin);
@@ -80,6 +197,7 @@ const Login: React.FC = () => {
       confirmPassword: '',
     });
     clearError();
+    setGoogleError(null);
   };
 
   return (
@@ -93,6 +211,12 @@ const Login: React.FC = () => {
         {error && (
           <div className="message error">
             {error}
+          </div>
+        )}
+
+        {googleError && (
+          <div className="message error">
+            {googleError}
           </div>
         )}
 
@@ -182,20 +306,32 @@ const Login: React.FC = () => {
             )}
           </button>
 
-          <button
-            type="button"
-            className="btn btn-google"
-            onClick={handleGoogleLogin}
-            disabled={loading}
-          >
-            <svg className="google-icon" viewBox="0 0 24 24">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-            </svg>
-            Continue with Google
-          </button>
+          {/* Google Sign-In Section */}
+          <div className="google-signin-section">
+            <div className="divider">
+              <span>or</span>
+            </div>
+            
+            {googleInitialized ? (
+              <div className="google-signin-container">
+                {oneTapFailed && !googleError && (
+                  <p className="google-info">
+                    Use the Google Sign-In button below:
+                  </p>
+                )}
+                <div 
+                  ref={googleButtonRef} 
+                  className="google-button-container"
+                  style={{ width: '100%' }}
+                />
+              </div>
+            ) : (
+              <div className="google-loading">
+                <div className="spinner" style={{ width: '20px', height: '20px', margin: '10px auto' }}></div>
+                <p>Loading Google Sign-In...</p>
+              </div>
+            )}
+          </div>
         </form>
 
         <div className="form-toggle">

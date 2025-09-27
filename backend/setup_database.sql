@@ -1,6 +1,6 @@
 -- Create database
-CREATE DATABASE IF NOT EXISTS react_php_login;
-USE react_php_login;
+CREATE DATABASE IF NOT EXISTS react_php_db;
+USE react_php_db;
 
 -- Create users table
 CREATE TABLE users (
@@ -10,5 +10,5 @@ CREATE TABLE users (
     password VARCHAR(255) NOT NULL,
     token VARCHAR(255) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );

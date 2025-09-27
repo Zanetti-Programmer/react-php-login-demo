@@ -14,15 +14,33 @@ header("Content-Type: application/json; charset=UTF-8");
 $database = new Database();
 $db = $database->getConnection();
 
+$user = new User($db);
+$data = json_decode(file_get_contents("php://input"));
+$action = isset($_GET['action']) ? $_GET['action'] : '';
+
+// Check for database connection and provide mock responses in debug mode
+if (!$db && Config::getDebugMode()) {
+    error_log("Database connection failed, using mock responses for development");
+    
+    // Handle mock responses for development
+    if ($action === 'google' || $action === 'login' || $action === 'register') {
+        sendSuccess("Mock authentication successful (database not available)", array(
+            "token" => "mock-token-" . uniqid(),
+            "user" => array(
+                "id" => 1,
+                "name" => $data->name ?? "Mock User",
+                "email" => $data->email ?? "mock@example.com"
+            )
+        ));
+        exit();
+    }
+}
+
 if (!$db) {
     http_response_code(500);
     echo json_encode(array("message" => "Database connection failed."));
     exit();
 }
-
-$user = new User($db);
-$data = json_decode(file_get_contents("php://input"));
-$action = isset($_GET['action']) ? $_GET['action'] : '';
 
 // Error handling function
 function handleError($message, $code = 400) {

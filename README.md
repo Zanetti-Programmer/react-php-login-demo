@@ -66,37 +66,47 @@ CREATE TABLE users (
 
 ### Backend Setup
 
-1. **Database Setup**
-   ```bash
-   mysql -u root -p < backend/setup_database.sql
+1. **Environment Configuration**
+   Create a `.env` file in the `backend` directory:
+   ```env
+   DB_NAME=react_php_db
+   DB_USER=root
+   DB_PASS=your_password
+   TOKEN_LENGTH=64
+   GOOGLE_CLIENT_ID=your-google-client-id
+   JWT_SECRET=your-jwt-secret-key
+   DEBUG_MODE=true
    ```
 
-2. **Configure Database**
-   Edit `backend/config/database.php` with your database credentials:
-   ```php
-   private $host = 'localhost';
-   private $db_name = 'react_php_login';
-   private $username = 'your_username';
-   private $password = 'your_password';
+2. **Database Setup**
+   ```bash
+   mysql -u root -p < backend/setup_database.sql
    ```
 
 3. **Web Server Configuration**
    - Place the `backend` folder in your web server document root
    - Or configure your web server to serve the backend from the project directory
    - Ensure PHP has permission to access the files
+   - For development, you can use PHP's built-in server:
+     ```bash
+     cd backend
+     php -S localhost:8000
+     ```
 
 ### Frontend Setup
 
-1. **Install Dependencies**
+1. **Environment Configuration**
+   Create a `.env` file in the `frontend` directory:
+   ```env
+   REACT_APP_GOOGLE_CLIENT_ID=your-google-client-id
+   REACT_APP_API_BASE_URL=http://localhost:8000/api
+   REACT_APP_APP_NAME=React PHP Login Demo
+   ```
+
+2. **Install Dependencies**
    ```bash
    cd frontend
    npm install
-   ```
-
-2. **Configure API Endpoint**
-   Edit `frontend/src/services/api.ts` to match your backend URL:
-   ```typescript
-   const API_BASE_URL = 'http://your-domain.com/backend/api';
    ```
 
 3. **Start Development Server**
@@ -154,6 +164,44 @@ npm test           # Run tests
 2. Start the React development server
 3. Navigate to `http://localhost:3000`
 4. Test registration, login, and Google authentication features
+
+## Troubleshooting
+
+### Google Login Issues in Chrome
+
+If Google login is not working in Chrome, this is typically caused by browser security features blocking Google's authentication scripts. Here are the common causes and solutions:
+
+#### Common Causes:
+1. **Ad blockers** - Extensions like uBlock Origin, AdBlock Plus
+2. **Privacy extensions** - Extensions that block tracking scripts
+3. **Browser privacy settings** - Enhanced privacy protection
+4. **Network filtering** - Corporate firewalls or DNS filtering
+
+#### Solutions:
+1. **Disable ad blockers** temporarily for your domain
+2. **Check browser extensions** - Disable privacy/security extensions temporarily
+3. **Try incognito mode** - This bypasses most extensions
+4. **Check developer console** - Look for blocked resource errors
+5. **Whitelist domains** - Add `accounts.google.com` to your ad blocker whitelist
+
+#### Debug Information:
+The application provides detailed console logging to help identify the issue:
+- `Failed to load resource: net::ERR_BLOCKED_BY_CLIENT` - Ad blocker is blocking Google services
+- `Google Sign-In script is loaded but API not available` - Script loaded but API blocked
+- The app will automatically fall back to mock authentication for testing
+
+#### For Development:
+If you need to test without Google services, the application includes a fallback mechanism that uses mock data when Google Sign-In is not available.
+
+### Database Connection Issues
+
+If you see database connection errors:
+1. **Check MySQL service** - Ensure MySQL is running
+2. **Verify credentials** - Check your `.env` file configuration
+3. **Database exists** - Run the setup SQL script
+4. **Permissions** - Ensure the database user has proper permissions
+
+For development without database, set `DEBUG_MODE=true` in backend `.env` to enable mock responses.
 
 ## Contributing
 

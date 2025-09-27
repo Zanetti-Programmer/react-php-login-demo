@@ -1,11 +1,21 @@
 <?php
+// Include configuration
+include_once 'config.php';
+
 // Database configuration
 class Database {
-    private $host = 'localhost';
-    private $db_name = 'react_php_login';
-    private $username = 'root';
-    private $password = '';
+    private $host;
+    private $db_name;
+    private $username;
+    private $password;
     private $conn;
+
+    public function __construct() {
+        $this->host = Config::getDbHost();
+        $this->db_name = Config::getDbName();
+        $this->username = Config::getDbUser();
+        $this->password = Config::getDbPass();
+    }
 
     public function getConnection() {
         $this->conn = null;

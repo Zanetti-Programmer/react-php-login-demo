@@ -14,15 +14,33 @@ header("Content-Type: application/json; charset=UTF-8");
 $database = new Database();
 $db = $database->getConnection();
 
+$user = new User($db);
+$data = json_decode(file_get_contents("php://input"));
+$action = isset($_GET['action']) ? $_GET['action'] : '';
+
+// Check for database connection and provide mock responses in debug mode
+if (!$db && Config::getDebugMode()) {
+    error_log("Database connection failed, using mock responses for development");
+    
+    // Handle mock responses for development
+    if ($action === 'google' || $action === 'login' || $action === 'register') {
+        sendSuccess("Mock authentication successful (database not available)", array(
+            "token" => "mock-token-" . uniqid(),
+            "user" => array(
+                "id" => 1,
+                "name" => $data->name ?? "Mock User",
+                "email" => $data->email ?? "mock@example.com"
+            )
+        ));
+        exit();
+    }
+}
+
 if (!$db) {
     http_response_code(500);
     echo json_encode(array("message" => "Database connection failed."));
     exit();
 }
-
-$user = new User($db);
-$data = json_decode(file_get_contents("php://input"));
-$action = isset($_GET['action']) ? $_GET['action'] : '';
 
 // Error handling function
 function handleError($message, $code = 400) {
@@ -60,7 +78,7 @@ try {
             $user->name = $data->name;
             $user->email = $data->email;
             $user->password = $data->password;
-            $user->token = bin2hex(random_bytes(Config::TOKEN_LENGTH / 2));
+            $user->token = bin2hex(random_bytes(Config::getTokenLength() / 2));
 
             // Check if email already exists
             if($user->emailExists()) {
@@ -93,7 +111,7 @@ try {
             
             if($user->emailExists()) {
                 if(password_verify($data->password, $user->password)) {
-                    $user->token = bin2hex(random_bytes(Config::TOKEN_LENGTH / 2));
+                    $user->token = bin2hex(random_bytes(Config::getTokenLength() / 2));
                     if($user->updateToken()) {
                         sendSuccess("Login successful.", array(
                             "token" => $user->token,
@@ -152,7 +170,7 @@ try {
             $user->name = $data->name;
             $user->email = $data->email;
             $user->password = password_hash(uniqid(), PASSWORD_DEFAULT); // Random password for Google users
-            $user->token = bin2hex(random_bytes(Config::TOKEN_LENGTH / 2));
+            $user->token = bin2hex(random_bytes(Config::getTokenLength() / 2));
 
             // Check if user already exists
             if($user->emailExists()) {
@@ -207,7 +225,7 @@ try {
     }
     
 } catch (Exception $e) {
-    if (Config::DEBUG_MODE) {
+    if (Config::getDebugMode()) {
         handleError("Server error: " . $e->getMessage(), 500);
     } else {
         handleError("Internal server error.", 500);

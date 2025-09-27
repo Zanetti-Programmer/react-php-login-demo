@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 
 const Login: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
+  const [googleInitialized, setGoogleInitialized] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -11,6 +12,56 @@ const Login: React.FC = () => {
   });
   
   const { login, register, googleLogin, loading, error, clearError } = useAuth();
+
+  const handleGoogleCallback = useCallback((response: any) => {
+    (async () => {
+      try {
+        // Decode the JWT token to get user info
+        const payload = JSON.parse(atob(response.credential.split('.')[1]));
+        await googleLogin(response.credential, payload.name, payload.email);
+      } catch (error) {
+        console.error('Google login error:', error);
+      }
+    })();
+  }, [googleLogin]);
+
+  useEffect(() => {
+    // Initialize Google Sign-In when component mounts
+    const initializeGoogle = () => {
+      if (window.google && window.google.accounts && window.google.accounts.id) {
+        try {
+          window.google.accounts.id.initialize({
+            client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID || 'your-google-client-id',
+            callback: handleGoogleCallback,
+          });
+          setGoogleInitialized(true);
+          console.log('Google Sign-In initialized successfully');
+        } catch (error) {
+          console.error('Error initializing Google Sign-In:', error);
+        }
+      } else {
+        // Check if the script is blocked or not loaded
+        if (document.querySelector('script[src*="accounts.google.com"]')) {
+          console.warn('Google Sign-In script is loaded but API not available. This could be due to ad blockers or privacy extensions.');
+        } else {
+          console.warn('Google Sign-In script not found in DOM');
+        }
+        
+        // Retry after a short delay if Google API is not loaded yet
+        const retryCount = parseInt(sessionStorage.getItem('google-init-retry') || '0');
+        if (retryCount < 10) {
+          sessionStorage.setItem('google-init-retry', (retryCount + 1).toString());
+          setTimeout(initializeGoogle, 500);
+        } else {
+          console.error('Failed to initialize Google Sign-In after multiple attempts. Please check if ad blockers or privacy extensions are blocking Google services.');
+        }
+      }
+    };
+
+    // Clear retry count on successful page load
+    sessionStorage.removeItem('google-init-retry');
+    initializeGoogle();
+  }, [handleGoogleCallback]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -41,23 +92,18 @@ const Login: React.FC = () => {
 
   const handleGoogleLogin = async () => {
     try {
-      // Initialize Google OAuth
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID || 'your-google-client-id',
-          callback: async (response: any) => {
-            try {
-              // Decode the JWT token to get user info
-              const payload = JSON.parse(atob(response.credential.split('.')[1]));
-              await googleLogin(response.credential, payload.name, payload.email);
-            } catch (error) {
-              console.error('Google login error:', error);
-            }
-          }
-        });
-        
+      if (googleInitialized && window.google && window.google.accounts) {
+        // Use the pre-initialized Google Sign-In
+        console.log('Attempting to show Google Sign-In prompt');
         window.google.accounts.id.prompt();
       } else {
+        console.warn('Google Sign-In not available. This might be due to:');
+        console.warn('1. Ad blockers blocking Google services');
+        console.warn('2. Privacy extensions blocking tracking scripts');
+        console.warn('3. Network connectivity issues');
+        console.warn('4. Browser privacy settings');
+        console.warn('Using fallback mock login for demonstration...');
+        
         // Fallback to mock data for demonstration
         const mockGoogleData = {
           token: 'mock-google-token',
@@ -67,7 +113,7 @@ const Login: React.FC = () => {
         await googleLogin(mockGoogleData.token, mockGoogleData.name, mockGoogleData.email);
       }
     } catch (error) {
-      // Error is handled by context
+      console.error('Error initiating Google login:', error);
     }
   };
 

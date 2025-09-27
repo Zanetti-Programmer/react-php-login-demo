@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 
 const Login: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
+  const [googleInitialized, setGoogleInitialized] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -11,6 +12,36 @@ const Login: React.FC = () => {
   });
   
   const { login, register, googleLogin, loading, error, clearError } = useAuth();
+
+  const handleGoogleCallback = useCallback((response: any) => {
+    (async () => {
+      try {
+        // Decode the JWT token to get user info
+        const payload = JSON.parse(atob(response.credential.split('.')[1]));
+        await googleLogin(response.credential, payload.name, payload.email);
+      } catch (error) {
+        console.error('Google login error:', error);
+      }
+    })();
+  }, [googleLogin]);
+
+  useEffect(() => {
+    // Initialize Google Sign-In when component mounts
+    const initializeGoogle = () => {
+      if (window.google && window.google.accounts) {
+        window.google.accounts.id.initialize({
+          client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID || 'your-google-client-id',
+          callback: handleGoogleCallback,
+        });
+        setGoogleInitialized(true);
+      } else {
+        // Retry after a short delay if Google API is not loaded yet
+        setTimeout(initializeGoogle, 100);
+      }
+    };
+
+    initializeGoogle();
+  }, [handleGoogleCallback]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -41,23 +72,11 @@ const Login: React.FC = () => {
 
   const handleGoogleLogin = async () => {
     try {
-      // Initialize Google OAuth
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID || 'your-google-client-id',
-          callback: async (response: any) => {
-            try {
-              // Decode the JWT token to get user info
-              const payload = JSON.parse(atob(response.credential.split('.')[1]));
-              await googleLogin(response.credential, payload.name, payload.email);
-            } catch (error) {
-              console.error('Google login error:', error);
-            }
-          }
-        });
-        
+      if (googleInitialized && window.google && window.google.accounts) {
+        // Use the pre-initialized Google Sign-In
         window.google.accounts.id.prompt();
       } else {
+        console.error('Google Sign-In not initialized');
         // Fallback to mock data for demonstration
         const mockGoogleData = {
           token: 'mock-google-token',
@@ -67,7 +86,7 @@ const Login: React.FC = () => {
         await googleLogin(mockGoogleData.token, mockGoogleData.name, mockGoogleData.email);
       }
     } catch (error) {
-      // Error is handled by context
+      console.error('Error initiating Google login:', error);
     }
   };
 
